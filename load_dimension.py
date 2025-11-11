@@ -1,44 +1,42 @@
-# plugins/operators/load_fact.py
-
+# plugins/operators/load_dimension.py
 
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 from airflow.hooks.postgres_hook import PostgresHook
 
-
-
-
-class LoadFactOperator(BaseOperator):
-    ui_color = '#F98866'
-
+class LoadDimensionOperator(BaseOperator):
+    """
+    Loads a dimension table.
+    mode: 'append' or 'delete-load' (delete existing rows then load)
+    insert_sql: parametrized insert-select SQL string
+    """
+    ui_color = '#80BD9E'
 
     @apply_defaults
     def __init__(self,
                  redshift_conn_id='redshift',
                  table='',
                  insert_sql='',
-                 mode='append', # 'append' or 'delete-load'
+                 mode='append',
                  *args, **kwargs):
-          super(LoadFactOperator, self).__init__(*args, **kwargs)
-          self.redshift_conn_id = redshift_conn_id
-          self.table = table
-          self.insert_sql = insert_sql
-          self.mode = mode
-
+        super(LoadDimensionOperator, self).__init__(*args, **kwargs)
+        self.redshift_conn_id = redshift_conn_id
+        self.table = table
+        self.insert_sql = insert_sql
+        self.mode = mode
 
     def execute(self, context):
-        redshift = PostgresHook(postgres_conn_id=self.redshift_conn_id)
-
+        hook = PostgresHook(postgres_conn_id=self.redshift_conn_id)
 
         if self.mode not in ('append', 'delete-load'):
-            raise ValueError('mode must be "append" or "delete-load"')
-
+            raise ValueError("LoadDimensionOperator mode must be 'append' or 'delete-load'")
 
         if self.mode == 'delete-load':
-            self.log.info(f'Deleting data from fact table {self.table} before load')
-            redshift.run(f'DELETE FROM {self.table}')
+            self.log.info(f"LoadDimensionOperator: deleting data from {self.table}")
+            hook.run(f"DELETE FROM {self.table}")
 
-
-        self.log.info(f'Inserting data into fact table {self.table}')
-        redshift.run(self.insert_sql)
-        self.log.info('LoadFactOperator completed')
+        self.log.info(f"LoadDimensionOperator: inserting data into {self.table}")
+        if not self.insert_sql:
+            raise ValueError("LoadDimensionOperator requires insert_sql parameter")
+        hook.run(self.insert_sql)
+        self.log.info("LoadDimensionOperator: completed")
