@@ -1,14 +1,17 @@
 # plugins/operators/stage_redshift.py
+
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 from airflow.hooks.postgres_hook import PostgresHook
 from airflow.exceptions import AirflowException
-from plugins.helpers.sql_queries import copy_sql_template
+import logging
 
 class StageToRedshiftOperator(BaseOperator):
-"""Copy JSON/CSV data from S3 to Redshift staging table.
-   Template fields allow jinja templating of s3_key to support partitioning by execution date.
-"""
+    """
+    Copies data from S3 to Redshift staging table.
+    - Supports JSON and CSV.
+    - template_fields allows s3_key templating (execution date partitions etc).
+    """
     ui_color = '#358140'
     template_fields = ('s3_key',)
 
@@ -20,9 +23,9 @@ class StageToRedshiftOperator(BaseOperator):
                  s3_bucket='',
                  s3_key='',
                  region='us-west-2',
-                 file_format='json', # 'json' or 'csv'
-                 json_path='auto',
-                 delimiter=',',
+                 file_format='json',     # 'json' or 'csv'
+                 json_path='auto',       # s3 path or 'auto'
+                 delimiter=',',          # for CSV
                  *args, **kwargs):
         super(StageToRedshiftOperator, self).__init__(*args, **kwargs)
         self.redshift_conn_id = redshift_conn_id
@@ -31,54 +34,57 @@ class StageToRedshiftOperator(BaseOperator):
         self.s3_bucket = s3_bucket
         self.s3_key = s3_key
         self.region = region
-        self.file_format = file_format
+        self.file_format = file_format.lower()
         self.json_path = json_path
         self.delimiter = delimiter
 
+    def _build_copy_sql(self, s3_path):
+        """
+        Build COPY SQL depending on file_format and parameters.
+        """
+        if self.file_format == 'json':
+            # Use JSON 'auto' or user supplied json_path
+            json_clause = f"JSON '{self.json_path}'" if self.json_path and self.json_path.lower() != 'auto' else "JSON 'auto'"
+            copy_sql = f"""
+                COPY {self.table}
+                FROM '{s3_path}'
+                IAM_ROLE '{self.aws_iam_role}'
+                {json_clause}
+                REGION '{self.region}'
+                TIMEFORMAT as 'epochmillisecs'
+                COMPUPDATE OFF
+                STATUPDATE OFF;
+            """
+        elif self.file_format == 'csv':
+            # For CSV: provide delimiter and optionally IGNOREHEADER
+            copy_sql = f"""
+                COPY {self.table}
+                FROM '{s3_path}'
+                IAM_ROLE '{self.aws_iam_role}'
+                DELIMITER '{self.delimiter}'
+                IGNOREHEADER 1
+                REGION '{self.region}'
+                COMPUPDATE OFF
+                STATUPDATE OFF;
+            """
+        else:
+            raise AirflowException(f"Unsupported file_format: {self.file_format}. Use 'json' or 'csv'.")
+        return copy_sql
+
     def execute(self, context):
-        self.log.info('StageToRedshiftOperator starting')
-
-
+        self.log.info("StageToRedshiftOperator: starting")
         if not all([self.redshift_conn_id, self.aws_iam_role, self.table, self.s3_bucket, self.s3_key]):
-            raise AirflowException('Missing required parameter for StageToRedshiftOperator')
-
+            raise AirflowException("StageToRedshiftOperator requires redshift_conn_id, aws_iam_role, table, s3_bucket, s3_key")
 
         redshift = PostgresHook(postgres_conn_id=self.redshift_conn_id)
-        s3_path = f's3://{self.s3_bucket}/{self.s3_key}'
+        s3_path = f"s3://{self.s3_bucket}/{self.s3_key}"
 
-# Build format-specific clauses
-        if self.file_format.lower() == 'json':
-            format_clause = 'JSON'
-            if self.json_path and self.json_path.lower() != 'auto':
-# allow absolute s3 path or 'auto'
-               json_path_clause = f"FORMAT AS JSON '{self.json_path}'"
-            else:
-               json_path_clause = "FORMAT AS JSON 'auto'"
-        elif self.file_format.lower() == 'csv':
-            format_clause = 'CSV'
-            json_path_clause = f"DELIMITER '{self.delimiter}' IGNOREHEADER 1"
-        else:
-            raise AirflowException(f'Unsupported file_format {self.file_format}. Use "json" or "csv"')
+        self.log.info(f"StageToRedshiftOperator: clearing destination table {self.table}")
+        # truncate staging table to avoid duplicate staging rows across runs
+        redshift.run(f"TRUNCATE TABLE {self.table}")
 
-# The copy_sql_template expects placeholders; we will build final SQL matching that template
-# but to keep it clear, supply format and json_path_clause separately
-       final_sql = copy_sql_template.format(
-           table=self.table,
-           s3_path=s3_path,
-           iam_role=self.aws_iam_role,
-           format=format_clause,
-           json_path_clause=json_path_clause,
-           region=self.region
-    )
-
-
-    self.log.info(f'Clearing data from destination table {self.table} before COPY')
-    redshift.run(f'TRUNCATE TABLE {self.table}')
-
-
-    self.log.info(f'Running COPY command from {s3_path} into {self.table}')
-    self.log.debug('COPY SQL: %s', final_sql)
-    redshift.run(final_sql)
-
-
-    self.log.info('StageToRedshiftOperator completed')          
+        copy_sql = self._build_copy_sql(s3_path)
+        self.log.info(f"StageToRedshiftOperator: running COPY for {s3_path} into {self.table}")
+        logging.debug("COPY SQL: %s", copy_sql)
+        redshift.run(copy_sql)
+        self.log.info("StageToRedshiftOperator: completed")
