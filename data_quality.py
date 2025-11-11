@@ -1,28 +1,49 @@
-from airflow.hooks.postgres_hook import PostgresHook
+# plugins/operators/data_quality.py
+
+
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
+from airflow.hooks.postgres_hook import PostgresHook
+
+
+
 
 class DataQualityOperator(BaseOperator):
+ui_color = '#89DA59'
 
-    ui_color = '#89DA59'
 
-    @apply_defaults
-    def __init__(self,
-                 redshift_conn_id,
-                 tables,
-                 *args, **kwargs):
+@apply_defaults
+def __init__(self,
+redshift_conn_id='redshift',
+tests=None,
+*args, **kwargs):
+super(DataQualityOperator, self).__init__(*args, **kwargs)
+self.redshift_conn_id = redshift_conn_id
+self.tests = tests or []
 
-        super(DataQualityOperator, self).__init__(*args, **kwargs)
-        self.redshift_conn_id = redshift_conn_id
-        self.tables = tables
 
-    def execute(self, context):
-        redshift = PostgresHook(postgres_conn_id=self.redshift_conn_id)
-        for table in self.tables:
-            self.log.info(f"Running Data Quality checks on table: {table}")
-            records = redshift.get_records(f"SELECT COUNT(*) FROM {table};")
-            #self.log.info(f"len(records): {len(records)}")
-            #self.log.info(f"len(records[0]): {len(records[0])}")
-            #self.log.info(f"len(records[0][0] ): {records[0][0]}")
-            if len(records) < 1 or len(records[0]) < 1 or records[0][0] < 1:
-                raise ValueError(f"{table} containe 0 rows")
+def _evaluate(self, result, expected):
+"""Evaluate result against expected which can be:
+- dict like {'gt': 0}, {'eq': 5}
+- int (equality)
+- None -> default to > 0
+"""
+if isinstance(expected, dict):
+if 'gt' in expected:
+return result > expected['gt']
+if 'eq' in expected:
+return result == expected['eq']
+if 'gte' in expected:
+return result >= expected['gte']
+if 'lt' in expected:
+return result < expected['lt']
+return False
+elif isinstance(expected, int):
+return result == expected
+else:
+# default expectation: result > 0
+return result > 0
+
+
+def execute(self, context):
+re
