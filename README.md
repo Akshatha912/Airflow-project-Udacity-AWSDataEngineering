@@ -16,7 +16,7 @@ Create custom operators to perform tasks such as staging the data, filling the d
 Implementation
 Copy S3 Data
 Create S3 bucket
-aws s3 mb s3://uc-de-airflow-aws/
+aws s3 mb s3://airflow-project-bucket123/
 Copy the data from the udacity bucket to the home cloudshell directory:
 aws s3 cp s3://udacity-dend/log-data/ ~/log-data/ --recursive
 aws s3 cp s3://udacity-dend/song-data/ ~/song-data/ --recursive
@@ -24,10 +24,22 @@ Copy the data from the home cloudshell directory to required bucket:
 aws s3 cp ~/log-data/ s3://uc-de-airflow-aws/log-data/ --recursive
 aws s3 cp ~/song-data/ s3://uc-de-airflow-aws/song-data/ --recursive
 List the data in your own bucket to be sure it copied over
-aws s3 ls s3://uc-de-airflow-aws/log-data/
-aws s3 ls s3://uc-de-airflow-aws/song-data/
-Airflow DAG
-DAG for project
+aws s3 ls s3://airflow-project-bucket123/log-data/
+aws s3 ls s3://airflow-project-bucket124/song-data/
+
+Folder Structure:
+dags/
+├── final_project.py
+├── create_tables.sql
+plugins/
+├── operators/
+│   ├── stage_redshift.py
+│   ├── load_fact.py
+│   ├── load_dimension.py
+│   ├── data_quality.py
+└── helpers/
+    └── sql_queries.py
+
 
 Operators:
 
